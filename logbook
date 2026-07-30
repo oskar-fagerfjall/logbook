@@ -1,179 +1,251 @@
 #!/bin/sh
 
 APP_DIR="$HOME/.logbook"
-GLOBAL_LINK="$APP_DIR/current"
-INDEX_FILE="$APP_DIR/logbooks.md"
-HOME_LINK="$HOME/logbook.md"
-LOG_FILE="$GLOBAL_LINK/logbook.md"
+SESSIONS_DIR="$APP_DIR/sessions"
+RECENTS_FILE="$APP_DIR/recent"
+DEFAULT_LOGBOOK="$HOME/logbook.md"
 
 get_datetime() {
     date +"%Y-%m-%d %H:%M:%S"
 }
 
-ensure_app_dir() {
-    mkdir -p "$APP_DIR"
+ensure_app_dirs() {
+    mkdir -p "$APP_DIR" "$SESSIONS_DIR"
 }
 
-ensure_logbook_open() {
-    if [ ! -f "$LOG_FILE" ]; then
-        echo "Error: No open logbook found at $GLOBAL_LINK" >&2
-        exit 1
+get_tty_id() {
+    T=$(tty 2>/dev/null | tr -c 'a-zA-Z0-9' '_')
+    if [ -z "$T" ] || [ "$T" = "not_a_tty_" ]; then
+        SID=$(ps -o sid= -p $$ 2>/dev/null | tr -d ' ')
+        if [ -n "$SID" ]; then
+            echo "sid_${SID}"
+        else
+            echo "pid_${PPID:-$$}"
+        fi
+    else
+        echo "$T"
     fi
 }
 
-case "$1" in
-    new)
-        ensure_app_dir
-        TEMPLATE_NAME="${2:-template}"
-        case "$TEMPLATE_NAME" in
-            *.md) TEMPLATE_FILE="$APP_DIR/$TEMPLATE_NAME" ;;
-            *) TEMPLATE_FILE="$APP_DIR/${TEMPLATE_NAME}.md" ;;
-        esac
+get_session_leader() {
+    SID=$(ps -o sid= -p $$ 2>/dev/null | tr -d ' ')
+    if [ -n "$SID" ]; then
+        echo "$SID"
+    else
+        echo "${PPID:-$$}"
+    fi
+}
 
-        # Create minimal default template if 'template' is requested and does not exist
-        if [ "$TEMPLATE_NAME" = "template" ] && [ ! -f "$TEMPLATE_FILE" ]; then
-            cat << 'EOF' > "$TEMPLATE_FILE"
-# Logbook @LOGBOOK_TITLE@
-
-- Created: @CREATION_TIME@
-- Path: @LOGBOOK_PATH@
-
----
-
-EOF
-        fi
-
-        if [ ! -f "$TEMPLATE_FILE" ]; then
-            echo "Error: Template file '$TEMPLATE_FILE' does not exist." >&2
-            exit 1
-        fi
-
-        mkdir -p ./logbook
-        NOW=$(get_datetime)
-        ABS_PATH="$(pwd)/logbook"
-        TARGET_LOGBOOK="./logbook/logbook.md"
-
-        # Pass 1: Replace reserved automatic variables (@CREATION_TIME@, @LOGBOOK_PATH@)
-        sed -e "s/@CREATION_TIME@/$NOW/g" \
-            -e "s|@LOGBOOK_PATH@|$ABS_PATH|g" \
-            "$TEMPLATE_FILE" > "$TARGET_LOGBOOK"
-
-        # Pass 2: Interactively prompt for remaining @PLACEHOLDER@ variables
-        PLACEHOLDERS=$(grep -o '@[A-Z0-9_]\{1,\}@' "$TARGET_LOGBOOK" 2>/dev/null | tr -d '@' | sort -u)
-
-        for VAR in $PLACEHOLDERS; do
-            printf "%s: " "$VAR"
-            if [ -c /dev/tty ]; then
-                read -r VALUE < /dev/tty
+to_abs_path() {
+    TARGET="$1"
+    case "$TARGET" in
+        ~/*)
+            TARGET="$HOME/${TARGET#~/}"
+            ;;
+        /*)
+            ;;
+        *)
+            DIR=$(dirname "$TARGET")
+            BASE=$(basename "$TARGET")
+            ABS_DIR=$(cd "$DIR" 2>/dev/null && pwd)
+            if [ -n "$ABS_DIR" ]; then
+                TARGET="$ABS_DIR/$BASE"
             else
-                read -r VALUE
+                TARGET="$(pwd)/$BASE"
             fi
+            ;;
+    esac
+    echo "$TARGET"
+}
 
-            SAFE_VALUE=$(echo "$VALUE" | sed -e 's/[\/&]/\\&/g')
-            sed -e "s/@${VAR}@/${SAFE_VALUE}/g" "$TARGET_LOGBOOK" > "$TARGET_LOGBOOK.tmp" && mv "$TARGET_LOGBOOK.tmp" "$TARGET_LOGBOOK"
-        done
+get_open_logbook() {
+    TTY_ID=$(get_tty_id)
+    if [ -z "$TTY_ID" ]; then
+        echo ""
+        return
+    fi
+    SESSION_FILE="$SESSIONS_DIR/$TTY_ID"
+    if [ -f "$SESSION_FILE" ]; then
+        SAVED_SID=$(sed -n '1p' "$SESSION_FILE")
+        SAVED_PATH=$(sed -n '2p' "$SESSION_FILE")
 
-        # Open the new logbook
-        "$0" open
-
-        # Update logbooks index
-        touch "$INDEX_FILE"
-        if ! grep -F -q "$ABS_PATH" "$INDEX_FILE" 2>/dev/null; then
-            echo "- [$NOW] [$ABS_PATH](file://$ABS_PATH/logbook.md)" >> "$INDEX_FILE"
-        fi
-        ;;
-    open)
-        if [ ! -d ./logbook ]; then
-            echo "Error: ./logbook directory does not exist. Run 'logbook new' first." >&2
-            exit 1
-        fi
-        ensure_app_dir
-        ABS_LOGBOOK="$(pwd)/logbook"
-
-        # Update ~/logbook.md symlink
-        if [ -e "$HOME_LINK" ] && [ ! -L "$HOME_LINK" ]; then
-            echo "Error: $HOME_LINK exists and is a regular file." >&2
-            exit 1
-        fi      
-        rm -f "$GLOBAL_LINK"
-        ln -s "$ABS_LOGBOOK" "$GLOBAL_LINK"
-        rm -f "$HOME_LINK"
-        ln -s "$GLOBAL_LINK/logbook.md" "$HOME_LINK"
-        ;;
-    log)
-        shift
-        ensure_logbook_open
-        DATETIME=$(get_datetime)
-
-        if [ $# -gt 0 ]; then
-            MESSAGE="$*"
-            LINES=$(printf "%s\n" "$MESSAGE" | wc -l)
-            if [ "$LINES" -gt 1 ]; then
-                printf "%s:\n\n%s\n\n" "$DATETIME" "$MESSAGE" >> "$LOG_FILE"
-            else
-                printf "%s: %s\n" "$DATETIME" "$MESSAGE" >> "$LOG_FILE"
-            fi
+        if [ -n "$SAVED_SID" ] && kill -0 "$SAVED_SID" 2>/dev/null; then
+            echo "$SAVED_PATH"
+            return
         else
-            if [ -t 0 ]; then
-                echo "Error: No message provided and stdin is an interactive terminal." >&2
-                exit 1
-            fi
-            STDIN_CONTENT=$(cat)
-            if [ -n "$STDIN_CONTENT" ]; then
-                printf "%s:\n\n%s\n\n" "$DATETIME" "$STDIN_CONTENT" >> "$LOG_FILE"
-            fi
+            rm -f "$SESSION_FILE"
         fi
-        ;;
-    run)
-        shift
-        CMD_STR="$*"
-        if [ -z "$CMD_STR" ]; then
-            echo "Error: No command specified." >&2
+    fi
+    echo ""
+}
+
+update_recents() {
+    NEW_PATH="$1"
+    ensure_app_dirs
+    touch "$RECENTS_FILE"
+
+    TMP_RECENTS=$(mktemp 2>/dev/null || echo "$APP_DIR/recent_tmp_$$")
+    echo "$NEW_PATH" > "$TMP_RECENTS"
+    grep -v -F -x "$NEW_PATH" "$RECENTS_FILE" 2>/dev/null | head -n 49 >> "$TMP_RECENTS"
+    mv "$TMP_RECENTS" "$RECENTS_FILE"
+}
+
+open_path() {
+    TARGET="$(to_abs_path "$1")"
+    DIR=$(dirname "$TARGET")
+    mkdir -p "$DIR" || exit 1
+    touch "$TARGET" || exit 1
+
+    ensure_app_dirs
+    TTY_ID=$(get_tty_id)
+    SID=$(get_session_leader)
+
+    if [ -z "$TTY_ID" ] || [ -z "$SID" ]; then
+        echo "Error: Could not determine terminal TTY or session ID." >&2
+        exit 1
+    fi
+
+    SESSION_FILE="$SESSIONS_DIR/$TTY_ID"
+    printf "%s\n%s\n" "$SID" "$TARGET" > "$SESSION_FILE"
+
+    update_recents "$TARGET"
+    echo "Open logbook: $TARGET"
+}
+
+open_menu() {
+    ensure_app_dirs
+    touch "$RECENTS_FILE"
+
+    TMP_LIST=$(mktemp 2>/dev/null || echo "$APP_DIR/menu_tmp_$$")
+    echo "$DEFAULT_LOGBOOK" > "$TMP_LIST"
+
+    echo "Select a logbook to open for this terminal session:" >&2
+    echo "  1) $DEFAULT_LOGBOOK (default)" >&2
+
+    INDEX=2
+    while IFS= read -r ITEM; do
+        if [ -n "$ITEM" ] && [ "$ITEM" != "$DEFAULT_LOGBOOK" ]; then
+            echo "  $INDEX) $ITEM" >&2
+            echo "$ITEM" >> "$TMP_LIST"
+            INDEX=$((INDEX + 1))
+        fi
+    done < "$RECENTS_FILE"
+
+    printf "Enter choice [1]: " >&2
+    if [ -c /dev/tty ]; then
+        read -r CHOICE < /dev/tty
+    else
+        read -r CHOICE
+    fi
+
+    CHOICE="${CHOICE:-1}"
+
+    CHOSEN_PATH=$(sed -n "${CHOICE}p" "$TMP_LIST")
+    rm -f "$TMP_LIST"
+
+    if [ -z "$CHOSEN_PATH" ]; then
+        echo "Error: Invalid selection." >&2
+        exit 1
+    fi
+
+    open_path "$CHOSEN_PATH"
+}
+
+cmd_log() {
+    shift
+    LOG_FILE=$(get_open_logbook)
+    if [ -z "$LOG_FILE" ]; then
+        echo "Error: No open logbook in this terminal session. Run 'logbook open' first." >&2
+        exit 1
+    fi
+
+    DATETIME=$(get_datetime)
+
+    if [ $# -gt 0 ]; then
+        MESSAGE="$*"
+        printf "%s\n\n%s\n\n" "$DATETIME" "$MESSAGE" >> "$LOG_FILE"
+    else
+        if [ -t 0 ]; then
+            echo "Error: No message provided and stdin is an interactive terminal." >&2
             exit 1
         fi
+        STDIN_CONTENT=$(cat)
+        if [ -n "$STDIN_CONTENT" ]; then
+            printf "%s\n\n%s\n\n" "$DATETIME" "$STDIN_CONTENT" >> "$LOG_FILE"
+        fi
+    fi
+}
 
-        ensure_logbook_open
-        START_DATETIME=$(get_datetime)
+cmd_run() {
+    shift
+    LOG_FILE=$(get_open_logbook)
+    if [ -z "$LOG_FILE" ]; then
+        echo "Error: No open logbook in this terminal session. Run 'logbook open' first." >&2
+        exit 1
+    fi
 
-        # Log start entry
-        printf "%s: Running %s\n" "$START_DATETIME" "$CMD_STR" >> "$LOG_FILE"
+    if [ $# -eq 0 ]; then
+        echo "Error: No command specified." >&2
+        exit 1
+    fi
 
-        TMP_OUT=$(mktemp 2>/dev/null || echo "/tmp/logbook_run_out_$$")
-        TMP_STATUS=$(mktemp 2>/dev/null || echo "/tmp/logbook_run_status_$$")
+    CMD_STR="$*"
+    START_DATETIME=$(get_datetime)
+    START_SEC=$(date +%s)
 
-        (
-            "$@"
-            echo $? > "$TMP_STATUS"
-        ) 2>&1 | tee "$TMP_OUT"
+    TMP_OUT=$(mktemp 2>/dev/null || echo "/tmp/logbook_run_out_$$")
+    TMP_STATUS=$(mktemp 2>/dev/null || echo "/tmp/logbook_run_status_$$")
 
-        EXIT_CODE=$(cat "$TMP_STATUS" 2>/dev/null || echo 0)
-        END_DATETIME=$(get_datetime)
+    (
+        "$@"
+        echo $? > "$TMP_STATUS"
+    ) 2>&1 | tee "$TMP_OUT"
 
-        cat << EOF >> "$LOG_FILE"
-<details><summary>${END_DATETIME}: finished with code ${EXIT_CODE}</summary>
+    EXIT_CODE=$(cat "$TMP_STATUS" 2>/dev/null || echo 0)
+    END_SEC=$(date +%s)
+    ELAPSED=$((END_SEC - START_SEC))
+
+    cat << EOF >> "$LOG_FILE"
+${START_DATETIME}
+
+Command \`${CMD_STR}\` exit code ${EXIT_CODE} in ${ELAPSED} seconds
 
 \`\`\`
 $(cat "$TMP_OUT")
 \`\`\`
-</details>
+
 EOF
 
-        rm -f "$TMP_OUT" "$TMP_STATUS"
+    rm -f "$TMP_OUT" "$TMP_STATUS"
+    exit "$EXIT_CODE"
+}
+
+case "$1" in
+    open)
+        shift
+        if [ $# -gt 0 ]; then
+            open_path "$1"
+        else
+            open_menu
+        fi
+        ;;
+    log)
+        cmd_log "$@"
+        ;;
+    run)
+        cmd_run "$@"
         ;;
     "")
-        if [ -L "$GLOBAL_LINK" ] || [ -d "$GLOBAL_LINK" ]; then
-            REAL_PATH=$(readlink "$GLOBAL_LINK" 2>/dev/null || ls -ld "$GLOBAL_LINK" 2>/dev/null | sed 's/.* -> //')
-            if [ -z "$REAL_PATH" ]; then
-                REAL_PATH="$GLOBAL_LINK"
-            fi
-            echo "Open logbook: $REAL_PATH/logbook.md"
+        LOG_FILE=$(get_open_logbook)
+        if [ -n "$LOG_FILE" ]; then
+            echo "Open logbook: $LOG_FILE"
         else
-            echo "No open logbook"
+            echo "No open logbook in this terminal session."
         fi
-        echo "Usage: logbook [new [template]|open|log <message>|run <command>]"
+        echo "Usage: logbook [open [$path]|log <message>|run <command>]"
         ;;
     *)
-        echo "Usage: logbook [new [template]|open|log <message>|run <command>]" >&2
+        echo "Usage: logbook [open [$path]|log <message>|run <command>]" >&2
         exit 1
         ;;
 esac

@@ -4,59 +4,49 @@ Records what Current You do so that Future You does not get angry at Past You
 
 ## Synopsis
 
-Logbook is a simple POSIX compliant shell script that makes it easy to capture timestamped logs of your work.
+Logbook is a simple POSIX-compliant shell script that makes it easy to capture timestamped logs of your work.
 It is essentially a glorified `echo "message" >> log.txt` that makes date handling invisible.
-The author wanted to have a tool that records events with the minimum amount of cognitive load on his part.
-Logbook uses a symlink in the user's home directory (`~/logbook.md`) pointing to the currently open logbook.
-This allows any tool or editor to access the active logbook from any terminal without configuration (e.g. `nvim ~/logbook.md` or `glow ~/logbook.md`).
+The author wanted a tool that records events with the minimum amount of cognitive load on his part.
 
-## Templates
-
-A logbook is created from a template. By default this is a simple markdown file that adds the title and time created to the header.
-You can create new templates to fit the kind of projects you work on.
-For computer repair, you may want to add `@CUSTOMER@`, `@ASSET_TAG@`, and `@DEADLINE@` to the template.
-When creating a new logbook you will be asked to fill these values in. Future You will thank you.
-These names are reserved and will be replaced without warning: `@CREATION_TIME@` and `@LOGBOOK_PATH@`
+Logbook tracks open logbooks per terminal tab/window using session files in `~/.logbook/sessions/`. This allows different terminals to log to different files simultaneously as a standalone executable—without requiring `eval` wrappers or shell profile (`~/.bashrc`) modifications.
 
 ## Installation
 
-Make `logbook` executable and move it into your `$PATH`: `chmod +x logbook && mv logbook ~/.local/bin/`.
-Also consider adding `alias log=logbook log` to your shell profile to minimize typing.
+Make `logbook` executable and move it into your `$PATH`:
+```sh
+chmod +x logbook && mv logbook ~/.local/bin/
+```
+Also consider adding `alias L="logbook log"` to your shell profile to minimize typing.
 
 ## Paths
 
-- Project directory `./logbook/` stores all files related to a single project
-- Project logbook `./logbook/logbook.md` is the log all events get appended to
-- Application directory `~/.logbook/` stores application wide settings
-- Logbook template `~/.logbook/template.md` is copied to new logbooks with variables substituted
-- Open project `~/.logbook/current/` is a symlink to the active project directory
-- Open logbook `~/logbook.md` is a symlink to the active project's `logbook.md`
-- Logbooks index `~/.logbook/logbooks.md` contains links to all created project logbooks
+- **Default logbook (`~/logbook.md`)**: The default logbook path, listed at the top of the menu when running `logbook open`.
+- **Application directory (`~/.logbook/`)**: Stores application-wide settings and session state.
+- **Recents list (`~/.logbook/recent`)**: Stores paths to recently opened logbooks, one per line.
+- **Sessions directory (`~/.logbook/sessions/`)**: Stores per-terminal session files mapping TTYs and session leader PIDs to active logbook paths.
 
 ## Examples
 
-`logbook new [template]` 
-- creates a new project directory
-- clones the logbook template `~/.logbook/[template].md` with 2-pass variable substitution:
-  1. Replaces reserved automatic variables (`@CREATION_TIME@`, `@LOGBOOK_PATH@`)
-  2. Interactively prompts for any remaining `@PLACEHOLDER@` variables found in the template
-- Calls `logbook open`
-- Appends logbook path as link in logbooks index
-Defaults to `~/.logbook/template.md`. A minimal default template is created if it does not exist.
-Prints an error if the specified template file does not exist.
+`logbook open $path`
+Opens `$path` for the current terminal tab/window and bubbles `$path` to the top of the Recents list.
+If `$path` does not exist, `logbook` creates the file automatically.
 
-`logbook open` makes a symlink from ~/.logbook/current to ./logbook, effectively opening the notebook of a project folder.
-Prints an error if a logbook directory does not exist.
+`logbook open`
+Prints a numbered Recents list allowing the user to select a logbook for the current terminal session by typing its number.
+The default `~/logbook.md` is always at the top of the list (selectable by pressing Enter).
 
-`logbook log message` silently appends "${datetime}: ${message}" to the open project logbook.
-Multi-line messages are logged as "${datetime}\n\n${message}" instead.
+`logbook log message`
+Silently appends `${datetime}\n\n${message}\n\n` to the open logbook for the current terminal session.
+Prints an error if no logbook is open in the terminal.
 
-`logbook log` logs stdin to the currently open logbook, so messages can be piped to the logbook.
-Prints an error if stdin is an interactive terminal.
+`logbook log`
+Logs `stdin` to the open logbook for the current terminal session, allowing messages or command outputs to be piped directly (e.g. `echo "done" | logbook log`).
+Prints an error if no logbook is open in the terminal.
 
-`logbook run command` logs a command. The output is teed to the logfile.
-- start: appends "${datetime}: Running ${command}" so that the start time is captured.
-- finish: appends a collapsible code block with "${datetime}: finished with code x" as the summary, and the commmand output as the detail.
-  Leave a blank line before the backticks inside <details>, otherwise standard Markdown parsers will not render the code block inside HTML details elements.
+`logbook run command`
+Executes `command`, teeing output to stdout and capturing it in the open logbook for the current terminal session.
+Prints an error if no logbook is open in the terminal.
+Log format: `${datetime}\n\nCommand \`${command}\` exit code {x} in {y} seconds\n\n\`\`\`${output}\`\`\`\n\n`
 
-`logbook` prints usage information and the path to the open logbook, or a note if no logbook is open.
+`logbook`
+Prints usage information and the path to the open logbook for the current terminal session, or a note if no logbook is open.
