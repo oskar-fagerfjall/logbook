@@ -36,17 +36,18 @@ Prints a numbered Recents list allowing the user to select a logbook for the cur
 The default `~/logbook.md` is always at the top of the list (selectable by pressing Enter).
 
 `logbook log message`
-Silently appends `${datetime}\n\n${message}\n\n` to the open logbook for the current terminal session.
+Silently appends `> ${datetime}\n\n${message}\n\n` to the open logbook for the current terminal session.
 Prints an error if no logbook is open in the terminal.
 
 `logbook log`
 Logs `stdin` to the open logbook for the current terminal session, allowing messages or command outputs to be piped directly (e.g. `echo "done" | logbook log`).
+If called from an interactive shell, the program will block until you type `Ctrl+D` to stop the log. Think of this as "Diary Mode".
 Prints an error if no logbook is open in the terminal.
 
 `logbook run command`
 Executes `command`, teeing output to stdout and capturing it in the open logbook for the current terminal session.
 Prints an error if no logbook is open in the terminal.
-Log format: `${datetime}\n\nCommand \`${command}\` exit code {x} in {y} seconds\n\n\`\`\`${output}\`\`\`\n\n`
+Log format: `> ${datetime}\n\nCommand \`${command}\` exit code {x} in {y} seconds\n\n\`\`\`${output}\`\`\`\n\n`
 
 `logbook`
 Prints usage information and the path to the open logbook for the current terminal session, or a note if no logbook is open.

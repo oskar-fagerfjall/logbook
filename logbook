@@ -163,15 +163,11 @@ cmd_log() {
 
     if [ $# -gt 0 ]; then
         MESSAGE="$*"
-        printf "%s\n\n%s\n\n" "$DATETIME" "$MESSAGE" >> "$LOG_FILE"
+        printf "> %s\n\n%s\n\n" "$DATETIME" "$MESSAGE" >> "$LOG_FILE"
     else
-        if [ -t 0 ]; then
-            echo "Error: No message provided and stdin is an interactive terminal." >&2
-            exit 1
-        fi
         STDIN_CONTENT=$(cat)
         if [ -n "$STDIN_CONTENT" ]; then
-            printf "%s\n\n%s\n\n" "$DATETIME" "$STDIN_CONTENT" >> "$LOG_FILE"
+            printf "> %s\n\n%s\n\n" "$DATETIME" "$STDIN_CONTENT" >> "$LOG_FILE"
         fi
     fi
 }
@@ -206,7 +202,7 @@ cmd_run() {
     ELAPSED=$((END_SEC - START_SEC))
 
     cat << EOF >> "$LOG_FILE"
-${START_DATETIME}
+> ${START_DATETIME}
 
 Command \`${CMD_STR}\` exit code ${EXIT_CODE} in ${ELAPSED} seconds
 
